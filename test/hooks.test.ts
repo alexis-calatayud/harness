@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Agent } from "../src/agent";
-import { commandHook, HOOKS_FILE, type Hooks, loadHooks, noHooks } from "../src/hooks";
+import { commandHook, HOOKS_FILE, type Hooks, loadHooks, noHooks, runHooks } from "../src/hooks";
 import { Permissions } from "../src/permissions";
 import type { ToolContext } from "../src/tools/tool";
 import { writeFile } from "../src/tools/write-file";
@@ -84,6 +84,27 @@ describe("commandHook", () => {
   });
 });
 
+describe("paths", () => {
+  const event = (p?: unknown) => ({ tool: "write_file", input: p === undefined ? {} : { path: p } });
+  const hooks = [commandHook("afterTool", { matcher: "write_file", paths: "**/*.ts", command: "exit 1" })];
+
+  test.each(["a.ts", "src/a.ts", "./src/a.ts"])("aplica a %s", async (p) => {
+    expect(await runHooks("afterTool", hooks, event(p), ctx)).toContain("exit code: 1");
+  });
+
+  test.each(["README.md", "src/a.ts.md", "../fuera.ts"])("no aplica a %s", async (p) => {
+    expect(await runHooks("afterTool", hooks, event(p), ctx)).toBeUndefined();
+  });
+
+  test("acepta rutas absolutas dentro de la raíz", async () => {
+    expect(await runHooks("afterTool", hooks, event(path.join(root, "src/a.ts")), ctx)).toContain("exit code: 1");
+  });
+
+  test("no aplica a herramientas sin path", async () => {
+    expect(await runHooks("afterTool", hooks, event(), ctx)).toBeUndefined();
+  });
+});
+
 describe("loadHooks", () => {
   test("sin fichero no hay hooks", async () => {
     expect(await loadHooks(root)).toEqual(noHooks);
@@ -92,11 +113,12 @@ describe("loadHooks", () => {
   test("lee el fichero de configuración", async () => {
     await mkdir(path.join(root, ".mini-agent"));
     await Bun.write(path.join(root, HOOKS_FILE), JSON.stringify({
-      afterTool: [{ name: "typecheck", matcher: "edit_file|write_file", command: "bun run typecheck" }],
+      afterTool: [{ name: "typecheck", matcher: "edit_file|write_file", paths: "**/*.ts", command: "bun run typecheck" }],
     }));
     const hooks = await loadHooks(root);
     expect(hooks.beforeTool).toHaveLength(0);
     expect(hooks.afterTool.map((h) => h.name)).toEqual(["typecheck"]);
+    expect(hooks.afterTool[0]!.paths!.match("src/a.ts")).toBe(true);
   });
 
   test("rechaza claves desconocidas", async () => {

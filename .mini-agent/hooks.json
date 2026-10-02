@@ -3,6 +3,11 @@
     { "name": "guard-bash", "matcher": "bash", "command": "bun scripts/guard-bash.ts" }
   ],
   "afterTool": [
-    { "name": "typecheck", "matcher": "edit_file|write_file", "command": "bun run typecheck" }
+    {
+      "name": "typecheck",
+      "matcher": "edit_file|write_file",
+      "paths": "**/*.{ts,tsx,json}",
+      "command": "bun run typecheck"
+    }
   ]
 }

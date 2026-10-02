@@ -57,12 +57,15 @@ Comandos que el harness ejecuta antes o después de una herramienta, configurado
     { "name": "guard-bash", "matcher": "bash", "command": "bun scripts/guard-bash.ts" }
   ],
   "afterTool": [
-    { "name": "typecheck", "matcher": "edit_file|write_file", "command": "bun run typecheck" }
+    { "name": "typecheck", "matcher": "edit_file|write_file", "paths": "**/*.{ts,tsx,json}", "command": "bun run typecheck" }
   ]
 }
 ```
 
 - `matcher` es una regex anclada sobre el nombre de la herramienta; sin ella, el hook aplica a todas.
+- `paths` es un glob sobre el `path` de la herramienta, relativo a `--root` (se normalizan `./x` y las
+  rutas absolutas). Con él, el hook solo aplica a herramientas con un `path` que encaje: editar un `.md`
+  no lanza el typecheck, y un hook con `paths` nunca aplica a `bash` ni a `grep` sin ruta.
 - El hook recibe el evento como JSON por stdin (`{ hook, tool, input, output? }`) y en
   `MINI_AGENT_HOOK` / `MINI_AGENT_TOOL`. Se ejecuta en `--root`, con `timeout_ms` (60 s por defecto).
 - **Exit 0**: no pasa nada. **Otro código**: su salida va al modelo.

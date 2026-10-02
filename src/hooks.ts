@@ -23,6 +23,11 @@ export interface Hook {
   name: string;
   /** Si no hay matcher, el hook aplica a todas las herramientas. */
   matcher?: RegExp;
+  /**
+   * Glob sobre `input.path`, relativo a la raíz: "**\/*.{ts,tsx}". Si se indica, el hook
+   * solo aplica a herramientas con un `path` que encaje (nunca a bash ni a grep sin path).
+   */
+  paths?: Bun.Glob;
   run(event: ToolEvent, ctx: ToolContext): Promise<string | undefined>;
 }
 
@@ -48,7 +53,7 @@ export async function runHooks(
 ): Promise<string | undefined> {
   const messages: string[] = [];
   for (const hook of hooks) {
-    if (hook.matcher && !hook.matcher.test(event.tool)) continue;
+    if (!applies(hook, event, ctx.root)) continue;
     let message: string | undefined;
     try {
       message = await hook.run(event, ctx);
@@ -64,12 +69,26 @@ export async function runHooks(
   return messages.length ? messages.join("\n\n") : undefined;
 }
 
+function applies(hook: Hook, event: ToolEvent, root: string): boolean {
+  if (hook.matcher && !hook.matcher.test(event.tool)) return false;
+  if (!hook.paths) return true;
+  const requested = (event.input as { path?: unknown } | null)?.path;
+  if (typeof requested !== "string") return false;
+  // El modelo puede pasar "./src/a.ts" o una ruta absoluta: se normaliza a relativa a la raíz.
+  const rel = path.relative(root, path.resolve(root, requested));
+  // Bun.Glob deja que "**" encaje con "..": una ruta fuera de la raíz nunca encaja.
+  if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return false;
+  return hook.paths.match(rel);
+}
+
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 export interface CommandHookConfig {
   name?: string;
   /** Regex sobre el nombre de la herramienta, anclada: "edit_file|write_file". */
   matcher?: string;
+  /** Glob sobre `input.path`: "**\/*.{ts,tsx}". */
+  paths?: string;
   command: string;
   timeout_ms?: number;
 }
@@ -83,6 +102,7 @@ export function commandHook(phase: HookPhase, config: CommandHookConfig): Hook {
   return {
     name: config.name ?? config.command,
     matcher: config.matcher === undefined ? undefined : new RegExp(`^(?:${config.matcher})$`),
+    paths: config.paths === undefined ? undefined : new Bun.Glob(config.paths),
     async run(event, { root, signal }) {
       const result = await exec(config.command, {
         cwd: root,
@@ -101,6 +121,7 @@ export const HOOKS_FILE = ".mini-agent/hooks.json";
 const hookConfigSchema = z.strictObject({
   name: z.string().optional(),
   matcher: z.string().optional(),
+  paths: z.string().min(1).optional(),
   command: z.string().min(1),
   timeout_ms: z.number().int().positive().optional(),
 });
