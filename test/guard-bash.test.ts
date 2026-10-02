@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { FileTracker } from "../src/file-tracker";
 import { commandHook } from "../src/hooks";
 import { check } from "../scripts/guard-bash";
 
@@ -56,7 +57,7 @@ describe("guard-bash", () => {
 
 describe("guard-bash como hook", () => {
   const root = path.resolve(import.meta.dir, "..");
-  const ctx = { root, signal: new AbortController().signal };
+  const ctx = { root, signal: new AbortController().signal, files: new FileTracker() };
   const hook = commandHook("beforeTool", { matcher: "bash", command: "bun scripts/guard-bash.ts" });
 
   test("bloquea con un mensaje para el modelo", async () => {

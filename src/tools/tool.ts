@@ -1,10 +1,13 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import type { FileTracker } from "../file-tracker";
 
 export interface ToolContext {
   /** Directorio raíz del proyecto: ninguna herramienta debe salir de aquí. */
   root: string;
   signal: AbortSignal;
+  /** Qué versión de cada fichero conoce el modelo: no se modifica lo que no ha leído. */
+  files: FileTracker;
 }
 
 /**

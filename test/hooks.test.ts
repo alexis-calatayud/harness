@@ -1,56 +1,31 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type Anthropic from "@anthropic-ai/sdk";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Agent } from "../src/agent";
+import { FileTracker } from "../src/file-tracker";
 import { commandHook, HOOKS_FILE, type Hooks, loadHooks, noHooks, runHooks } from "../src/hooks";
-import { Permissions } from "../src/permissions";
 import type { ToolContext } from "../src/tools/tool";
 import { writeFile } from "../src/tools/write-file";
-
-type Message = Anthropic.Beta.BetaMessage;
-type ToolResult = Anthropic.Beta.BetaToolResultBlockParam;
+import { endTurn, testAgent, toolResults, toolUse, type ToolResult } from "./fake-client";
 
 let root: string;
 let ctx: ToolContext;
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "mini-agent-hooks-"));
-  ctx = { root, signal: new AbortController().signal };
+  ctx = { root, signal: new AbortController().signal, files: new FileTracker() };
 });
 afterEach(() => rm(root, { recursive: true, force: true }));
 
-/** Cliente falso: cada llamada al modelo devuelve la siguiente respuesta de la lista. */
-function fakeClient(responses: Pick<Message, "stop_reason" | "content">[]): Anthropic {
-  let i = 0;
-  const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
-  const stream = () => ({ on() {}, finalMessage: async () => ({ ...responses[i++], usage }) });
-  return { beta: { messages: { stream } } } as unknown as Anthropic;
-}
-
 /** Simula: el modelo pide write_file y después termina. Devuelve el tool_result enviado. */
 async function runWriteTurn(hooks: Hooks): Promise<ToolResult> {
-  const agent = new Agent({
-    client: fakeClient([
-      {
-        stop_reason: "tool_use",
-        content: [{ type: "tool_use", id: "t1", name: "write_file", input: { path: "a.ts", content: "x" } }],
-      },
-      { stop_reason: "end_turn", content: [{ type: "text", text: "hecho", citations: null }] },
-    ] as Pick<Message, "stop_reason" | "content">[]),
-    tools: [writeFile],
-    permissions: new Permissions("yolo", async () => "s"),
-    hooks,
+  const agent = testAgent([toolUse("write_file", { path: "a.ts", content: "x" }), endTurn], {
     root,
-    model: "test",
-    effort: "low",
-    maxTurns: 5,
+    tools: [writeFile],
+    hooks,
   });
   await agent.send("escribe a.ts", new AbortController().signal);
-  // [user, assistant(tool_use), user(tool_result), assistant(end_turn)]
-  const results = agent.messages[2]!.content as ToolResult[];
-  return results[0]!;
+  return toolResults(agent)[0]!;
 }
 
 describe("commandHook", () => {

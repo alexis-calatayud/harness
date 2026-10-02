@@ -7,7 +7,8 @@ export const editFile = defineTool({
   description:
     "Reemplaza un fragmento exacto de un fichero. `old_string` debe aparecer exactamente una vez " +
     "(incluye líneas de contexto para que sea único), salvo que uses replace_all. " +
-    "Respeta la indentación exacta y no incluyas los números de línea de read_file.",
+    "Respeta la indentación exacta y no incluyas los números de línea de read_file. " +
+    "Tienes que haber leído el fichero con read_file antes, y debe no haber cambiado desde entonces.",
   schema: z.object({
     path: z.string().describe("Ruta relativa a la raíz del proyecto"),
     old_string: z.string().min(1).describe("Texto exacto a reemplazar"),
@@ -16,12 +17,14 @@ export const editFile = defineTool({
   }),
   readOnly: false,
   summarize: ({ path }) => path,
-  async run({ path, old_string, new_string, replace_all = false }, { root }) {
+  async run({ path, old_string, new_string, replace_all = false }, { root, files }) {
     if (old_string === new_string) throw new ToolError("old_string y new_string son idénticos");
 
-    const file = Bun.file(resolveInRoot(root, path));
+    const target = resolveInRoot(root, path);
+    const file = Bun.file(target);
     if (!(await file.exists())) throw new ToolError(`No existe el fichero: ${path}`);
     const original = await file.text();
+    files.assertKnown(target, original, path);
 
     const count = original.split(old_string).length - 1;
     if (count === 0) {
@@ -38,6 +41,7 @@ export const editFile = defineTool({
       ? original.replaceAll(old_string, () => new_string)
       : original.replace(old_string, () => new_string);
     await Bun.write(file, updated);
+    files.record(target, updated);
     return `Editado ${path} (${replace_all ? count : 1} reemplazo${count > 1 && replace_all ? "s" : ""})`;
   },
 });

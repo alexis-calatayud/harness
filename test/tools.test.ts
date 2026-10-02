@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { FileTracker } from "../src/file-tracker";
 import { resolveInRoot } from "../src/sandbox";
 import { bash } from "../src/tools/bash";
 import { editFile } from "../src/tools/edit-file";
@@ -15,7 +16,7 @@ let ctx: ToolContext;
 
 beforeAll(async () => {
   root = await mkdtemp(path.join(tmpdir(), "mini-agent-"));
-  ctx = { root, signal: new AbortController().signal };
+  ctx = { root, signal: new AbortController().signal, files: new FileTracker() };
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 
@@ -53,7 +54,8 @@ describe("herramientas", () => {
 
   test("grep encuentra y reporta rutas relativas", async () => {
     const out = await grep.run({ pattern: "dos" }, ctx);
-    expect(out).toContain("dir/hola.txt:2:dos");
+    // Línea exacta: con una raíz que pasa por un symlink (macOS: /var → /private/var) no debe quedar prefijo.
+    expect(out.split("\n")).toContain("dir/hola.txt:2:dos");
     expect(await grep.run({ pattern: "nada-de-nada" }, ctx)).toBe("Sin coincidencias");
   });
 

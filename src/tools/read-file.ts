@@ -17,11 +17,15 @@ export const readFile = defineTool({
   }),
   readOnly: true,
   summarize: ({ path }) => path,
-  async run({ path, offset = 1, limit = DEFAULT_LIMIT }, { root }) {
-    const file = Bun.file(resolveInRoot(root, path));
+  async run({ path, offset = 1, limit = DEFAULT_LIMIT }, { root, files }) {
+    const target = resolveInRoot(root, path);
+    const file = Bun.file(target);
     if (!(await file.exists())) throw new ToolError(`No existe el fichero: ${path}`);
 
-    const lines = (await file.text()).split("\n");
+    const text = await file.text();
+    // Cualquier lectura, aunque sea parcial, cuenta: edit_file exige texto exacto igualmente.
+    files.record(target, text);
+    const lines = text.split("\n");
     const slice = lines.slice(offset - 1, offset - 1 + limit);
     const numbered = slice.map((line, i) => `${offset + i}\t${line}`).join("\n");
     const remaining = lines.length - (offset - 1 + slice.length);

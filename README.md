@@ -27,6 +27,7 @@ En el REPL: `/reset`, `/usage`, `/exit`. Ctrl+C interrumpe el turno en curso.
 | `src/tools/*.ts` | `read_file`, `write_file`, `edit_file`, `grep`, `bash` |
 | `src/sandbox.ts` | Confina rutas del modelo a `--root` (incluye symlinks) |
 | `src/permissions.ts` | Lectura libre; escritura y bash preguntan (`s`/`n`/`a`) |
+| `src/file-tracker.ts` | Read-before-edit: qué versión de cada fichero conoce el modelo |
 | `src/hooks.ts` | Hooks `beforeTool`/`afterTool` y carga de `.mini-agent/hooks.json` |
 | `src/exec.ts` | Ejecución de comandos compartida por `bash` y los hooks |
 | `src/index.ts` | CLI, REPL, Ctrl+C, coste aproximado |
@@ -39,12 +40,28 @@ En el REPL: `/reset`, `/usage`, `/exit`. Ctrl+C interrumpe el turno en curso.
   (el input estaría truncado). `refusal` descarta el turno.
 - **Validación propia.** Con `eager_input_streaming` el servidor no valida los inputs: Zod lo hace
   antes de ejecutar, y un input inválido vuelve al modelo como `is_error`.
+- **Read-before-edit.** `edit_file` y `write_file` (sobre un fichero que ya existe) fallan si el modelo
+  no lo ha leído o si ha cambiado desde entonces (ver abajo).
 - **Los errores de herramienta no rompen el bucle.** Se devuelven al modelo para que se corrija.
 - **Permisos primero, ejecución en paralelo.** Las preguntas son secuenciales y lo aprobado se ejecuta
   con `Promise.all`. Todos los `tool_result` van en un único mensaje.
 - **Caché de prompt.** El system prompt y el orden de las herramientas son estables, y se usa
   `cache_control` automático. Para comprobarlo, mira `cache read` en `/usage`.
 - **Fallbacks.** `fallbacks: "default"` reintenta en el servidor si un clasificador rechaza.
+
+## Read-before-edit
+
+`FileTracker` guarda, por cada fichero, un hash del contenido que el modelo conoce: el que leyó con
+`read_file` (vale una lectura parcial) o el que escribió él mismo. Antes de modificar un fichero existente:
+
+- si no está registrado → *"No has leído X. Léelo con read_file antes de modificarlo."*
+- si el contenido actual no coincide (lo ha cambiado tú, otro proceso o un `sed` del propio agente
+  vía bash) → *"X ha cambiado desde que lo leíste… Vuelve a leerlo."*
+
+Crear un fichero nuevo no exige lectura. Se compara el contenido, no el mtime. El registro sigue al
+historial: `/reset` lo vacía y **un turno descartado lo devuelve al checkpoint**, porque lo leído en ese
+turno ya no está en el contexto del modelo. De paso, si un turno descartado había editado ficheros, el
+modelo tiene que releerlos antes de tocarlos de nuevo en lugar de trabajar sobre una versión que no recuerda.
 
 ## Hooks
 
@@ -94,8 +111,7 @@ a `--root` solo aplica a las herramientas de ficheros. Para eso existe el modo `
 
 ## Ejercicios para seguir
 
-1. **Read-before-edit**: rechaza `edit_file`/`write_file` sobre ficheros que el agente no ha leído
-   (o que han cambiado desde que los leyó).
+1. ~~**Read-before-edit**~~ ✅ hecho (ver [Read-before-edit](#read-before-edit)).
 2. ~~**Hooks**~~ ✅ hecho (ver [Hooks](#hooks)).
 3. **Reglas de permisos**: allowlist tipo `bash(git status*)`, `bash(bun test*)`.
 4. **Sandbox real para bash**: `sandbox-exec` en macOS o un contenedor.

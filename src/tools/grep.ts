@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { relative } from "node:path";
 import { z } from "zod";
 import { resolveInRoot } from "../sandbox";
 import { defineTool, truncate } from "./tool";
@@ -18,7 +20,8 @@ export const grep = defineTool({
   readOnly: true,
   summarize: ({ pattern, path }) => `/${pattern}/ en ${path ?? "."}`,
   async run({ pattern, path = ".", glob, ignore_case }, { root, signal }) {
-    const target = resolveInRoot(root, path);
+    // Se busca con una ruta relativa a la raíz para que la salida también lo sea.
+    const target = relative(realpathSync(root), resolveInRoot(root, path)) || ".";
     const rg = Bun.which("rg");
     const cmd = rg
       ? [rg, "--line-number", "--no-heading", "--color=never",
@@ -36,7 +39,7 @@ export const grep = defineTool({
     if (code === 1) return "Sin coincidencias";
     if (code > 1) return `Error en la búsqueda: ${err.trim()}`;
 
-    const lines = out.trimEnd().split("\n").map((l) => l.replace(root + "/", ""));
+    const lines = out.trimEnd().split("\n").map((l) => l.replace(/^\.\//, ""));
     const extra = lines.length > MAX_LINES ? `\n\n[${lines.length - MAX_LINES} coincidencias más; afina la búsqueda]` : "";
     return truncate(lines.slice(0, MAX_LINES).join("\n") + extra);
   },

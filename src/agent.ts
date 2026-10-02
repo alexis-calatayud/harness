@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessageStream } from "@anthropic-ai/sdk/lib/BetaMessageStream";
+import { FileTracker } from "./file-tracker";
 import { type Hooks, runHooks } from "./hooks";
 import type { Permissions } from "./permissions";
 import { type AgentTool, type ToolContext, ToolError, toApiTool } from "./tools/tool";
@@ -37,6 +38,7 @@ export class Agent {
   private readonly toolsByName: Map<string, AgentTool>;
   private readonly apiTools: Anthropic.Beta.BetaTool[];
   private readonly system: string;
+  private readonly files = new FileTracker();
 
   constructor(private readonly opts: AgentOptions) {
     this.toolsByName = new Map(opts.tools.map((t) => [t.name, t]));
@@ -46,6 +48,7 @@ export class Agent {
 
   reset() {
     this.messages.length = 0;
+    this.files.clear();
   }
 
   /**
@@ -54,9 +57,16 @@ export class Agent {
    *
    * El historial es append-only: si el turno falla o se aborta, se recorta hasta
    * el estado anterior (eliminar la cola mantiene intacto el prefijo cacheado).
+   * El registro de ficheros leídos vuelve al mismo punto: lo que el modelo leyó
+   * en un turno descartado ya no está en su contexto.
    */
   async send(userText: string, signal: AbortSignal): Promise<void> {
     const checkpoint = this.messages.length;
+    const filesCheckpoint = this.files.snapshot();
+    const discardTurn = () => {
+      this.messages.length = checkpoint;
+      this.files.restore(filesCheckpoint);
+    };
     this.messages.push({ role: "user", content: userText });
 
     try {
@@ -78,7 +88,7 @@ export class Agent {
             // Incluso con fallbacks, toda la cadena ha rechazado. Un tool_use podría
             // estar cortado, así que no se ejecuta nada y se descarta el turno.
             line(red(`\n✗ Rechazado (${message.stop_details?.category ?? "sin categoría"}). Se descarta el turno.`));
-            this.messages.length = checkpoint;
+            discardTurn();
             return;
 
           case "max_tokens":
@@ -107,7 +117,7 @@ export class Agent {
       }
       line(yellow(`\n⚠ Alcanzado el límite de ${this.opts.maxTurns} vueltas. Escribe "continúa" para seguir.`));
     } catch (err) {
-      this.messages.length = checkpoint;
+      discardTurn();
       throw err;
     }
   }
@@ -146,7 +156,7 @@ export class Agent {
   }
 
   private async runTools(toolUses: ToolUse[], signal: AbortSignal): Promise<ToolResult[]> {
-    const ctx: ToolContext = { root: this.opts.root, signal };
+    const ctx: ToolContext = { root: this.opts.root, signal, files: this.files };
 
     const hooks = this.opts.hooks;
 
