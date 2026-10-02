@@ -27,6 +27,8 @@ En el REPL: `/reset`, `/usage`, `/exit`. Ctrl+C interrumpe el turno en curso.
 | `src/tools/*.ts` | `read_file`, `write_file`, `edit_file`, `grep`, `bash` |
 | `src/sandbox.ts` | Confina rutas del modelo a `--root` (incluye symlinks) |
 | `src/permissions.ts` | Lectura libre; escritura y bash preguntan (`s`/`n`/`a`) |
+| `src/hooks.ts` | Hooks `beforeTool`/`afterTool` y carga de `.mini-agent/hooks.json` |
+| `src/exec.ts` | Ejecución de comandos compartida por `bash` y los hooks |
 | `src/index.ts` | CLI, REPL, Ctrl+C, coste aproximado |
 
 ## Decisiones del harness
@@ -44,6 +46,38 @@ En el REPL: `/reset`, `/usage`, `/exit`. Ctrl+C interrumpe el turno en curso.
   `cache_control` automático. Para comprobarlo, mira `cache read` en `/usage`.
 - **Fallbacks.** `fallbacks: "default"` reintenta en el servidor si un clasificador rechaza.
 
+## Hooks
+
+Comandos que el harness ejecuta antes o después de una herramienta, configurados en
+`.mini-agent/hooks.json` dentro de `--root`:
+
+```json
+{
+  "beforeTool": [
+    { "matcher": "bash", "command": "./scripts/guard.sh" }
+  ],
+  "afterTool": [
+    { "name": "typecheck", "matcher": "edit_file|write_file", "command": "bun run typecheck" }
+  ]
+}
+```
+
+- `matcher` es una regex anclada sobre el nombre de la herramienta; sin ella, el hook aplica a todas.
+- El hook recibe el evento como JSON por stdin (`{ hook, tool, input, output? }`) y en
+  `MINI_AGENT_HOOK` / `MINI_AGENT_TOOL`. Se ejecuta en `--root`, con `timeout_ms` (60 s por defecto).
+- **Exit 0**: no pasa nada. **Otro código**: su salida va al modelo.
+  - En `beforeTool` **bloquea** la herramienta: vuelve como `is_error` y no se pregunta permiso.
+  - En `afterTool` se **añade** al `tool_result` (sin `is_error`, la herramienta sí funcionó). Así el
+    modelo ve los errores de `tsc` justo después de su edición y los corrige en la siguiente vuelta.
+- `afterTool` solo se ejecuta si la herramienta ha funcionado. Un hook que falla o lanza en `beforeTool`
+  bloquea (falla cerrado).
+- Desde código se puede pasar cualquier `Hook` (`{ name, matcher?, run }`) en `AgentOptions.hooks`.
+
+Los hooks ejecutan comandos **sin pedir permiso**. Por eso el fichero se lee una sola vez al arrancar
+(si el agente lo edita, no tiene efecto hasta reiniciar) y la lista se muestra al inicio. Revísala antes de
+usar mini-agent en un repo que no sea tuyo. Con varias ediciones en paralelo, cada una lanza su
+`afterTool`, así que un `tsc` puede ejecutarse varias veces en la misma vuelta.
+
 ## ⚠️ Limitaciones conocidas
 
 `bash` **no está en sandbox**: se ejecuta con tus permisos y puede tocar cualquier cosa. El confinamiento
@@ -53,8 +87,7 @@ a `--root` solo aplica a las herramientas de ficheros. Para eso existe el modo `
 
 1. **Read-before-edit**: rechaza `edit_file`/`write_file` sobre ficheros que el agente no ha leído
    (o que han cambiado desde que los leyó).
-2. **Hooks**: `beforeTool`/`afterTool` configurables (p. ej. ejecutar `tsc` tras cada edición y
-   devolver los errores al modelo).
+2. ~~**Hooks**~~ ✅ hecho (ver [Hooks](#hooks)).
 3. **Reglas de permisos**: allowlist tipo `bash(git status*)`, `bash(bun test*)`.
 4. **Sandbox real para bash**: `sandbox-exec` en macOS o un contenedor.
 5. **Gestión de contexto**: recortar `tool_result` antiguos o compactar cuando el contexto crece.

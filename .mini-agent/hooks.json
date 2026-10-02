@@ -1,0 +1,5 @@
+{
+  "afterTool": [
+    { "name": "typecheck", "matcher": "edit_file|write_file", "command": "bun run typecheck" }
+  ]
+}

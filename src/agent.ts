@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessageStream } from "@anthropic-ai/sdk/lib/BetaMessageStream";
+import { type Hooks, runHooks } from "./hooks";
 import type { Permissions } from "./permissions";
 import { type AgentTool, type ToolContext, ToolError, toApiTool } from "./tools/tool";
 import { cyan, dim, line, red, write, yellow } from "./ui";
@@ -13,6 +14,7 @@ export interface AgentOptions {
   client: Anthropic;
   tools: AgentTool[];
   permissions: Permissions;
+  hooks: Hooks;
   root: string;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
@@ -146,8 +148,11 @@ export class Agent {
   private async runTools(toolUses: ToolUse[], signal: AbortSignal): Promise<ToolResult[]> {
     const ctx: ToolContext = { root: this.opts.root, signal };
 
-    // Fase 1 (secuencial): validar y pedir permisos, para no mezclar preguntas en la terminal.
-    const planned = [];
+    const hooks = this.opts.hooks;
+
+    // Fase 1 (secuencial): validar, hooks beforeTool y permisos, para no mezclar
+    // preguntas en la terminal. Un hook que bloquea evita preguntar al usuario.
+    const planned: ({ use: ToolUse; error: string } | { use: ToolUse; tool: AgentTool; input: Parameters<AgentTool["run"]>[0] })[] = [];
     for (const use of toolUses) {
       const tool = this.toolsByName.get(use.name);
       if (!tool) {
@@ -161,21 +166,28 @@ export class Agent {
       }
       const summary = tool.summarize(parsed.data);
       line(cyan(`\n→ ${tool.name}`) + dim(` ${summary}`));
+      const blocked = await runHooks("beforeTool", hooks.beforeTool, { tool: tool.name, input: parsed.data }, ctx);
+      if (blocked) {
+        planned.push({ use, error: `Bloqueado por un hook:\n${blocked}` });
+        continue;
+      }
       const decision = await this.opts.permissions.check(tool, summary);
       if (!decision.allowed) {
         planned.push({ use, error: decision.reason });
         continue;
       }
-      planned.push({ use, run: () => tool.run(parsed.data, ctx) });
+      planned.push({ use, tool, input: parsed.data });
     }
 
-    // Fase 2 (en paralelo): ejecutar lo aprobado.
+    // Fase 2 (en paralelo): ejecutar lo aprobado y sus hooks afterTool.
     return Promise.all(
       planned.map(async (p): Promise<ToolResult> => {
         if ("error" in p) return { type: "tool_result", tool_use_id: p.use.id, is_error: true, content: p.error };
         try {
-          const content = await p.run!();
-          return { type: "tool_result", tool_use_id: p.use.id, content };
+          const output = await p.tool.run(p.input, ctx);
+          // La herramienta ha funcionado: el feedback de los hooks se añade, pero no es un is_error.
+          const feedback = await runHooks("afterTool", hooks.afterTool, { tool: p.tool.name, input: p.input, output }, ctx);
+          return { type: "tool_result", tool_use_id: p.use.id, content: feedback ? `${output}\n\n${feedback}` : output };
         } catch (err) {
           if (signal.aborted) throw err;
           // Los errores de herramienta vuelven al modelo para que se corrija; no rompen el bucle.

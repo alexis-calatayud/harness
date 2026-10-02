@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { defineTool, truncate } from "./tool";
+import { exec, formatExec } from "../exec";
+import { defineTool } from "./tool";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -18,23 +19,6 @@ export const bash = defineTool({
   readOnly: false,
   summarize: ({ command }) => command,
   async run({ command, timeout_ms = DEFAULT_TIMEOUT_MS }, { root, signal }) {
-    const proc = Bun.spawn(["bash", "-c", command], {
-      cwd: root,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-      timeout: timeout_ms,
-      signal,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    const parts = [`exit code: ${exitCode}${proc.signalCode ? ` (${proc.signalCode}, ¿timeout?)` : ""}`];
-    if (stdout) parts.push(`stdout:\n${stdout}`);
-    if (stderr) parts.push(`stderr:\n${stderr}`);
-    return truncate(parts.join("\n\n"));
+    return formatExec(await exec(command, { cwd: root, signal, timeoutMs: timeout_ms }));
   },
 });

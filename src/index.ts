@@ -4,6 +4,7 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { Agent, type AgentOptions, type Usage } from "./agent";
+import { type Hooks, loadHooks } from "./hooks";
 import { Permissions } from "./permissions";
 import { defaultTools } from "./tools";
 import { bold, dim, green, line, red, yellow } from "./ui";
@@ -33,10 +34,25 @@ const permissions = new Permissions(args.yes ? "yolo" : "ask", (q) =>
   rl.question(q, { signal: inFlight?.signal }),
 );
 
+// Los hooks ejecutan comandos sin pedir permiso: se cargan una vez y se muestran al arrancar.
+let hooks: Hooks;
+try {
+  hooks = await loadHooks(root);
+} catch (err) {
+  line(red(`✗ ${err instanceof Error ? err.message : String(err)}`));
+  process.exit(1);
+}
+for (const phase of ["beforeTool", "afterTool"] as const) {
+  for (const hook of hooks[phase]) {
+    line(dim(`hook ${phase} ${hook.matcher ? `[${hook.matcher.source}] ` : ""}${hook.name}`));
+  }
+}
+
 const agent = new Agent({
   client: new Anthropic(),
   tools: defaultTools,
   permissions,
+  hooks,
   root,
   model: args.model,
   effort: args.effort as AgentOptions["effort"],
