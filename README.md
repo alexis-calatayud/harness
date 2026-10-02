@@ -54,7 +54,7 @@ Comandos que el harness ejecuta antes o después de una herramienta, configurado
 ```json
 {
   "beforeTool": [
-    { "matcher": "bash", "command": "./scripts/guard.sh" }
+    { "name": "guard-bash", "matcher": "bash", "command": "bun scripts/guard-bash.ts" }
   ],
   "afterTool": [
     { "name": "typecheck", "matcher": "edit_file|write_file", "command": "bun run typecheck" }
@@ -72,6 +72,12 @@ Comandos que el harness ejecuta antes o después de una herramienta, configurado
 - `afterTool` solo se ejecuta si la herramienta ha funcionado. Un hook que falla o lanza en `beforeTool`
   bloquea (falla cerrado).
 - Desde código se puede pasar cualquier `Hook` (`{ name, matcher?, run }`) en `AgentOptions.hooks`.
+
+Este repo trae ambos activos en `.mini-agent/hooks.json`. `scripts/guard-bash.ts` bloquea borrados
+(`rm`, `rmdir`, `unlink`, `shred`, `find -delete`, también tras `sudo`, `xargs`, `bash -c`...) y git
+destructivo o que publica (`push`, `rm`, `clean`, `reset --hard`, `branch -d`). Mira la palabra en
+posición de comando, así que `git commit -m "quita el rm"` pasa. Es una red contra accidentes, **no un
+sandbox**: `python -c`, `eval` o variables pueden saltárselo.
 
 Los hooks ejecutan comandos **sin pedir permiso**. Por eso el fichero se lee una sola vez al arrancar
 (si el agente lo edita, no tiene efecto hasta reiniciar) y la lista se muestra al inicio. Revísala antes de
